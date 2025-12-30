@@ -1,0 +1,39 @@
+[project]
+name = "glasses-x-edge"
+version = "0.1.0"
+description = "Smart Glasses Vision Search Demo using Qdrant Edge"
+readme = "README.md"
+requires-python = ">=3.11,<3.14"
+dependencies = [
+    "qdrant-edge-py>=0.1.0",
+    "fastembed>=0.7.4",
+    "opencv-python>=4.12.0.88",
+    "numpy>=2.0.0,<2.3.0",
+    "pillow>=11.0.0",
+    "requests>=2.32.5",
+    "scikit-image>=0.26.0",
+    "streamlit>=1.52.2",
+    "qdrant-client>=1.16.2",
+]
+
+[dependency-groups]
+dev = [
+    "pytest>=7.4.0",
+    "black>=23.0.0",
+    "isort>=5.12.0",
+    "mypy>=1.6.0",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.black]
+line-length = 100
+target-version = ['py39']
+
+[tool.isort]
+profile = "black"
+line_length = 100
+
+
