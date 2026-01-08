@@ -1,3 +1,11 @@
+import sys
+
+from glasses_x_edge.constants import QDRANT_STORAGE_DIR_NAME
+
+sys.path.insert(
+    0, "/Users/anush/Desktop/qdrant/lib/edge/python/.venv/lib/python3.11/site-packages"
+)
+
 import threading
 import time
 from pathlib import Path
@@ -17,8 +25,6 @@ from glasses_x_edge.constants import (
 from glasses_x_edge.embedding import CrossModalEncoder
 from glasses_x_edge.storage import VisionStorage
 
-# TODO(Anush008): Find if there's a direct way to hide video controls in Streamlit
-# Hide video controls
 HIDDEN_CONTROLS_CSS = """
 <style>
     video { pointer-events: none; }
@@ -32,7 +38,7 @@ class SystemState:
         self.images_dir = Path(DEFAULT_DATA_DIR) / IMAGES_DIR_NAME
         self.images_dir.mkdir(parents=True, exist_ok=True)
 
-        self.storage = VisionStorage(Path(DEFAULT_DATA_DIR))
+        self.storage = VisionStorage(Path(DEFAULT_DATA_DIR) / QDRANT_STORAGE_DIR_NAME)
         self.storage.initialize()
 
         self.encoder = CrossModalEncoder()
@@ -97,10 +103,25 @@ def render_search_interface(system):
 def render_sync_status(storage):
     q_size = storage.upload_queue.qsize()
     st.metric("Upload Queue", q_size)
-    if q_size > 0:
-        st.info("Syncing...")
-    else:
-        st.success("Synced")
+
+
+@st.fragment
+def render_snapshot_restore(storage):
+    if st.button("🔄 Restore from Server"):
+        try:
+            with st.spinner("Restoring..."):
+                storage.restore_snapshot()
+            st.success("Restored!")
+        except Exception as e:
+            st.error(f"Error: {e}")
+    st.caption(
+        "## How?\n"
+        "1. Pushes pending local images to the server.\n"
+        "2. Creates a new server-side snapshot.\n"
+        "3. Swaps local storage with that snapshot.\n\n"
+        "**Zero Downtime**: New images captured during this restore are buffered "
+        "in memory and added to the swapped storage. "
+    )
 
 
 def main():
@@ -112,6 +133,9 @@ def main():
     with st.sidebar:
         st.header("Server Sync Status")
         render_sync_status(system.storage)
+
+        st.header("Snapshot Restore")
+        render_snapshot_restore(system.storage)
 
     col_left, col_right = st.columns([1, 1])
 
