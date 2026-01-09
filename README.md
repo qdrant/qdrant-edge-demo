@@ -4,7 +4,8 @@ This is a proof-of-concept for smart glasses that remember what they see and hel
 
 Powered by [Qdrant Edge](https://qdrant.tech/edge/).
 
-<img width="1242" height="629" alt="Smart Glasses X Qdrant Demo" src="https://github.com/user-attachments/assets/dcece6b7-7929-4f40-96ea-0aad2cb4f0ef" />
+<img width="1265" height="646" alt="532390022-2a521bc4-642f-497b-952f-772d8ebf1e45" src="https://github.com/user-attachments/assets/e913e142-3a66-4ab7-bed5-e11fc6e68c3a" />
+
 
 ## How?
 
