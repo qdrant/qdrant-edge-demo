@@ -1,5 +1,7 @@
 import logging
 import queue
+import shutil
+import tempfile
 import threading
 import time
 import uuid
@@ -7,6 +9,7 @@ from datetime import datetime
 from pathlib import Path
 
 import numpy as np
+import requests
 from qdrant_client import QdrantClient
 from qdrant_client import models as rest_models
 from qdrant_edge import (
@@ -29,6 +32,7 @@ from .constants import (
     MMR_MAX_CANDIDATES,
     SEARCH_LIMIT,
     SERVER_URL,
+    SNAPSHOT_CHUNK_SIZE,
     SYNC_INTERVAL,
     VECTOR_DIMENSION,
     VECTOR_NAME,
@@ -44,8 +48,12 @@ class VisionStorage:
         self.shard = None
         self.server_client = QdrantClient(url=SERVER_URL)
         self.upload_queue = queue.Queue()
-        self.is_running = True
         self.worker_thread = None
+        self.is_running = False
+
+        self._is_restoring = False
+        self._restore_buffer = []
+        self._restore_lock = threading.Lock()
 
     def initialize(self):
         self.data_dir.mkdir(parents=True, exist_ok=True)
@@ -65,15 +73,15 @@ class VisionStorage:
             sparse_vector_data={},
             payload_storage_type=PayloadStorageType.InRamMmap,
         )
-
-        self.shard = Shard(str(self.data_dir), config)
+        self.config = config
+        self.shard = Shard(str(self.data_dir), self.config)
         self._ensure_server_collection()
         self.worker_thread = threading.Thread(target=self._sync_worker, daemon=True)
+        self.is_running = True
         self.worker_thread.start()
 
     def _ensure_server_collection(self):
         if not self.server_client.collection_exists(COLLECTION_NAME):
-            logger.info(f"Creating collection {COLLECTION_NAME} on server")
             self.server_client.create_collection(
                 collection_name=COLLECTION_NAME,
                 vectors_config={
@@ -85,9 +93,6 @@ class VisionStorage:
             )
 
     def _sync_worker(self):
-        logger.info("Starting sync worker")
-        backoff = SYNC_INTERVAL
-
         while self.is_running:
             points_to_upload = []
 
@@ -101,26 +106,30 @@ class VisionStorage:
                 time.sleep(SYNC_INTERVAL)
                 continue
 
+            self.server_client.upsert(
+                collection_name=COLLECTION_NAME, points=points_to_upload
+            )
+            time.sleep(SYNC_INTERVAL)
+
+    def force_sync(self):
+        points = []
+        while not self.upload_queue.empty():
             try:
-                self.server_client.upsert(
-                    collection_name=COLLECTION_NAME, points=points_to_upload
-                )
-                backoff = SYNC_INTERVAL
-                time.sleep(SYNC_INTERVAL)
-            except Exception as e:
-                logger.warning(f"Sync failed: {e}. Retrying in {backoff}s")
-                for point in points_to_upload:
-                    self.upload_queue.put(point)
+                points.append(self.upload_queue.get_nowait())
+            except queue.Empty:
+                break
 
-                time.sleep(backoff)
-                backoff = min(backoff * 1.5, 60)
+        if points:
+            self.server_client.upsert(
+                collection_name=COLLECTION_NAME, points=points, wait=True
+            )
 
-    def stop(self):
+    def stop_server_sync_worker(self):
         self.is_running = False
         if self.worker_thread:
-            self.worker_thread.join(timeout=1.0)
+            self.worker_thread.join()
 
-    def store_image(self, image_path: Path, embedding: np.ndarray) -> str:
+    def store_image(self, image_path, embedding) -> str:
         image_id = str(uuid.uuid4())
         timestamp = datetime.now().isoformat()
         vector = embedding.tolist()
@@ -130,7 +139,12 @@ class VisionStorage:
         }
 
         point = Point(id=image_id, vector={VECTOR_NAME: vector}, payload=payload)
-        self.shard.update(UpdateOperation.upsert_points([point]))
+
+        with self._restore_lock:
+            if self._is_restoring:
+                self._restore_buffer.append(point)
+            else:
+                self.shard.update(UpdateOperation.upsert_points([point]))
 
         rest_point = rest_models.PointStruct(
             id=image_id, vector={VECTOR_NAME: vector}, payload=payload
@@ -169,10 +183,56 @@ class VisionStorage:
             for result in results
         ]
 
-    def restore_snapshot(self, snapshot_url: str):
-        # TODO (Anush008)
-        # 1. Download Snapshot
-        # 2. Initialize new shard with snapshot
-        # 3. Upsert images added after snapshot download was initiated into new shard
-        # 4. Swap old shard with new shard
-        pass
+    def _create_server_snapshot(self, shard_id: int):
+        snap_url = (
+            f"{SERVER_URL}/collections/{COLLECTION_NAME}/shards/{shard_id}/snapshots"
+        )
+        resp = requests.post(snap_url)
+        resp.raise_for_status()
+
+        result = resp.json().get("result")
+        if not result or not result.get("name"):
+            raise ValueError("Failed to get snapshot name from response")
+
+        return result["name"], f"{snap_url}/{result['name']}"
+
+    def _download_snapshot(self, url: str, target_path: Path):
+        with requests.get(url, stream=True) as r:
+            r.raise_for_status()
+            with open(target_path, "wb") as f:
+                for chunk in r.iter_content(chunk_size=SNAPSHOT_CHUNK_SIZE):
+                    f.write(chunk)
+
+    def restore_snapshot(self, shard_id: int = 0):
+        self.stop_server_sync_worker()
+        self.force_sync()
+
+        _, snapshot_url = self._create_server_snapshot(shard_id)
+
+        with self._restore_lock:
+            self._is_restoring = True
+
+        with tempfile.TemporaryDirectory(dir=self.data_dir.parent) as restore_dir:
+            snapshot_path = Path(restore_dir) / "shard.snapshot"
+
+            self._download_snapshot(snapshot_url, snapshot_path)
+
+            self.shard = None
+            if self.data_dir.exists():
+                shutil.rmtree(self.data_dir)
+            self.data_dir.mkdir(parents=True, exist_ok=True)
+
+            Shard.unpack_snapshot(str(snapshot_path), str(self.data_dir))
+            self.shard = Shard(str(self.data_dir), self.config)
+
+            with self._restore_lock:
+                points_to_restore = list(self._restore_buffer)
+                self._restore_buffer = []
+                self._is_restoring = False
+            if points_to_restore:
+                self.shard.update(UpdateOperation.upsert_points(points_to_restore))
+
+        if not self.is_running:
+            self.worker_thread = threading.Thread(target=self._sync_worker, daemon=True)
+            self.is_running = True
+            self.worker_thread.start()
