@@ -4,7 +4,7 @@ from pathlib import Path
 from fastembed import ImageEmbedding
 from PIL import Image
 
-from .constants import MODELS_CACHE_DIR, TEXT_MODEL_NAME, VISION_MODEL_NAME
+from .constants import TEXT_MODEL_NAME, VISION_MODEL_NAME
 
 logger = logging.getLogger(__name__)
 
@@ -16,9 +16,7 @@ class ImageEncoder:
     def load_model(self):
         if self.model is None:
             logger.info(f"Loading image embedding model: {VISION_MODEL_NAME}")
-            self.model = ImageEmbedding(
-                model_name=VISION_MODEL_NAME, cache_dir=str(MODELS_CACHE_DIR)
-            )
+            self.model = ImageEmbedding(model_name=VISION_MODEL_NAME)
 
     def encode_image(self, image):
         if self.model is None:
@@ -40,9 +38,7 @@ class TextEncoder:
             from fastembed import TextEmbedding
 
             logger.info(f"Loading text embedding model: {TEXT_MODEL_NAME}")
-            self.model = TextEmbedding(
-                model_name=TEXT_MODEL_NAME, cache_dir=str(MODELS_CACHE_DIR)
-            )
+            self.model = TextEmbedding(model_name=TEXT_MODEL_NAME)
 
     def encode_text(self, text: str):
         if self.model is None:
