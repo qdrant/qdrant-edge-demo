@@ -2,10 +2,6 @@ import sys
 
 from glasses_x_edge.constants import QDRANT_STORAGE_DIR_NAME
 
-sys.path.insert(
-    0, "/Users/anush/Desktop/qdrant/lib/edge/python/.venv/lib/python3.11/site-packages"
-)
-
 import threading
 import time
 from pathlib import Path
