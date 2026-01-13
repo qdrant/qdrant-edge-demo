@@ -157,12 +157,12 @@ class VisionStorage:
         results = self.shard.query(
             QueryRequest(
                 prefetches=[],
-                query=Mmr(
-                    query_embedding.tolist(),
-                    VECTOR_NAME,
-                    MMR_DIVERSITY_FACTOR,
-                    MMR_MAX_CANDIDATES,
-                ),
+                query=Mmr(**{
+                    "vector": query_embedding.tolist(),
+                    "using": VECTOR_NAME,
+                    "lambda": MMR_DIVERSITY_FACTOR,
+                    "candidates_limit": MMR_MAX_CANDIDATES,
+                }),
                 filter=None,
                 score_threshold=None,
                 limit=limit,
