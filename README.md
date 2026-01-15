@@ -4,25 +4,24 @@ This is a proof-of-concept for smart glasses that remember what they see and hel
 
 Powered by [Qdrant Edge](https://qdrant.tech/edge/).
 
-<img width="1265" height="646" alt="532390022-2a521bc4-642f-497b-952f-772d8ebf1e45" src="https://github.com/user-attachments/assets/e913e142-3a66-4ab7-bed5-e11fc6e68c3a" />
-
+<img width="1272" height="657" alt="Qdrant Edge x Smart Glasses demo" src="https://github.com/user-attachments/assets/4a46e4f1-12cd-41a4-99a7-9cf1ffa54a13" />
 
 ## How?
 
-<img width="1245" height="1264" alt="Architecture" src="https://github.com/user-attachments/assets/3eb92a1b-b3d5-493f-9580-53a3c8f66171" />
-
-
 The system has two main parts: the glasses with Qdrant Edge and the Qdrant server.
 
-### On the device:
+### On the device
 
-The glasses use a [CLIP model](https://huggingface.co/Qdrant/clip-ViT-B-32-vision) to turn video frames into vectors. We also compare frame similarity to skip redundant frames. We save these directly to a local Qdrant Edge Shard. Unlike the usual Qdrant client, we run the storage engine inside our Python process.
+The glasses use a [CLIP model](https://huggingface.co/Qdrant/clip-ViT-B-32-vision) to turn video frames into vectors. We compare frame similarity to skip redundant frames.
 
-### The Sync & Index:
+Vectors are stored locally in a mutable shard and forwarded to the server for indexing.
 
-Indexing (building the HNSW graph) is heavy on the CPU, so we don't do it on the glasses. Instead, we send the vectors to a server too. The server builds the index, creates a snapshot, and the glasses download that snapshot later.
+### Sync & Index
 
-We built a "zero-downtime" restore mechanism for this. When the glasses download a new snapshot, they buffer any new incoming frames in memory. Once the new snapshot is swapped in, those buffered frames are upserted.
+Building the HNSW graph is CPU-heavy, so we offload it to the server. The glasses sync back the indexed data into an immutable shard.
+
+We use this two-shard design to enable partial snapshots. Since the immutable shard is always an exact copy of the server, we can limit the snapshot download to only the new updates instead of the full database. Searches query both shards and merge results.
+
 
 ## Try it out
 

@@ -1,7 +1,4 @@
 import sys
-
-from glasses_x_edge.constants import QDRANT_STORAGE_DIR_NAME
-
 import threading
 import time
 from pathlib import Path
@@ -15,7 +12,9 @@ from glasses_x_edge.constants import (
     DEFAULT_FPS,
     DEFAULT_SIMILARITY_THRESHOLD,
     DEFAULT_VIDEO_PATH,
+    IMAGE_PATH_KEY,
     IMAGES_DIR_NAME,
+    QDRANT_STORAGE_DIR_NAME,
     SEARCH_LIMIT,
 )
 from glasses_x_edge.embedding import CrossModalEncoder
@@ -88,7 +87,7 @@ def render_search_interface(system):
             return
 
         for result in results:
-            image_path = Path(result["image_path"])
+            image_path = Path(result[IMAGE_PATH_KEY])
             st.image(
                 Image.open(image_path),
                 width="stretch",
@@ -103,21 +102,32 @@ def render_sync_status(storage):
 
 @st.fragment
 def render_snapshot_restore(storage):
-    if st.button("🔄 Restore from Server"):
+    if st.button("🌜 Incremental Sync", use_container_width=True):
         try:
-            with st.spinner("Restoring..."):
-                storage.restore_snapshot()
-            st.success("Restored!")
+            with st.spinner("Syncing..."):
+                storage.sync_from_server()
+            st.success("Synced!")
         except Exception as e:
-            st.error(f"Error: {e}")
-    st.caption(
-        "## How?\n"
-        "1. Pushes pending local images to the server.\n"
-        "2. Creates a new server-side snapshot.\n"
-        "3. Swaps local storage with that snapshot.\n\n"
-        "**Zero Downtime**: New images captured during this restore are buffered "
-        "in memory and added to the swapped storage. "
-    )
+            st.error(f"{e}")
+
+    if st.button("🌕 Full Sync", use_container_width=True):
+        try:
+            with st.spinner("Syncing..."):
+                storage.full_sync_from_server()
+            st.success("Synced!")
+        except Exception as e:
+            st.error(f"{e}")
+
+    with st.expander("What is this?"):
+        st.markdown(
+            "Initially, the glasses store vectors unindexed to save CPU. "
+            "The server builds the HNSW index for fast search.\n\n"
+            "Syncing downloads the indexed snapshot from the server.\n\n"
+            "🌜 Incremental Sync\n\n"
+            "Downloads a partial snapshot with only the new updates. Requires a prior full sync.\n\n"
+            "🌕 Full Sync\n\n"
+            "Downloads the complete indexed snapshot from the server."
+        )
 
 
 def main():
@@ -130,7 +140,7 @@ def main():
         st.header("Server Sync Status")
         render_sync_status(system.storage)
 
-        st.header("Snapshot Restore")
+        st.header("Server Sync")
         render_snapshot_restore(system.storage)
 
     col_left, col_right = st.columns([1, 1])
