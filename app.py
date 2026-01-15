@@ -103,7 +103,7 @@ def render_sync_status(storage):
 
 @st.fragment
 def render_snapshot_restore(storage):
-    if st.button("🔄 Restore from Server"):
+    if st.button("🔄 Sync From Server"):
         try:
             with st.spinner("Restoring..."):
                 storage.restore_snapshot()
@@ -111,10 +111,10 @@ def render_snapshot_restore(storage):
         except Exception as e:
             st.error(f"Error: {e}")
     st.caption(
-        "## How?\n"
-        "1. Pushes pending local images to the server.\n"
-        "2. Creates a new server-side snapshot.\n"
-        "3. Swaps local storage with that snapshot.\n\n"
+        "## What is this?\n"
+        "Initially, the glasses store vectors unindexed to save CPU.\n\n"
+        "The server builds the HNSW index for fast search.\n\n"
+        "Syncing downloads the indexed snapshot from the server.\n\n"
         "**Zero Downtime**: New images captured during this restore are buffered "
         "in memory and added to the swapped storage. "
     )
@@ -130,7 +130,7 @@ def main():
         st.header("Server Sync Status")
         render_sync_status(system.storage)
 
-        st.header("Snapshot Restore")
+        st.header("Sync Index")
         render_snapshot_restore(system.storage)
 
     col_left, col_right = st.columns([1, 1])
