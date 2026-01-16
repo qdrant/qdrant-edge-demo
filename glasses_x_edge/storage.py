@@ -14,13 +14,13 @@ from qdrant_client import QdrantClient
 from qdrant_client import models as rest_models
 from qdrant_edge import (
     Distance,
+    EdgeShard,
     Mmr,
     PayloadStorageType,
     PlainIndexConfig,
     Point,
     QueryRequest,
     SegmentConfig,
-    Shard,
     UpdateOperation,
     VectorDataConfig,
     VectorStorageType,
@@ -74,7 +74,7 @@ class VisionStorage:
             payload_storage_type=PayloadStorageType.InRamMmap,
         )
         self.config = config
-        self.shard = Shard(str(self.data_dir), self.config)
+        self.shard = EdgeShard(str(self.data_dir), self.config)
         self._ensure_server_collection()
         self.worker_thread = threading.Thread(target=self._sync_worker, daemon=True)
         self.is_running = True
@@ -226,8 +226,8 @@ class VisionStorage:
                 shutil.rmtree(self.data_dir)
             self.data_dir.mkdir(parents=True, exist_ok=True)
 
-            Shard.unpack_snapshot(str(snapshot_path), str(self.data_dir))
-            self.shard = Shard(str(self.data_dir), self.config)
+            EdgeShard.unpack_snapshot(str(snapshot_path), str(self.data_dir))
+            self.shard = EdgeShard(str(self.data_dir), self.config)
 
             with self._restore_lock:
                 points_to_restore = list(self._restore_buffer)
