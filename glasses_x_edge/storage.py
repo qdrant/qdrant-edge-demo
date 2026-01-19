@@ -32,7 +32,6 @@ from .constants import (
     COLLECTION_NAME,
     IMAGE_PATH_KEY,
     IMMUTABLE_SHARD_DIR,
-    MANIFEST_FILE_NAME,
     MMR_DIVERSITY_FACTOR,
     MMR_MAX_CANDIDATES,
     MUTABLE_SHARD_DIR,
@@ -212,23 +211,12 @@ class VisionStorage:
             for result in unique_results[:limit]
         ]
 
-    def _get_manifest_path(self) -> Path:
-        return self.data_dir / MANIFEST_FILE_NAME
-
-    def _load_local_manifest(self) -> Optional[dict]:
-        manifest_path = self._get_manifest_path()
-        if not manifest_path.exists():
-            return None
-        with open(manifest_path, "r") as f:
-            return json.load(f)
-
-    def _save_local_manifest(self):
+    def _get_local_manifest(self) -> dict:
         if self.immutable_shard is None:
-            return
-        manifest = self.immutable_shard.snapshot_manifest()
-        manifest_path = self._get_manifest_path()
-        with open(manifest_path, "w") as f:
-            json.dump(manifest, f, indent=2)
+            raise ValueError(
+                "Baseline for partial snapshots is not set. Run a full sync first."
+            )
+        return self.immutable_shard.snapshot_manifest()
 
     def _download_partial_snapshot(
         self, manifest: dict, shard_id: int, target_path: Path
@@ -282,11 +270,7 @@ class VisionStorage:
         self.stop_server_sync_worker()
         self.force_sync()
 
-        local_manifest = self._load_local_manifest()
-        if local_manifest is None:
-            raise ValueError("No local manifest found. Run a full sync first.")
-        if self.immutable_shard is None:
-            raise ValueError("No immutable shard. Run a full sync first.")
+        local_manifest = self._get_local_manifest()
 
         sync_timestamp = time.time()
 
@@ -297,7 +281,6 @@ class VisionStorage:
             )
 
             self.immutable_shard.update_from_snapshot(str(partial_snapshot_path))
-            self._save_local_manifest()
 
         self._cleanup_mutable_shard(sync_timestamp)
         self._restart_sync_worker()
@@ -321,7 +304,6 @@ class VisionStorage:
 
             Shard.unpack_snapshot(str(snapshot_path), str(self.immutable_dir))
             self.immutable_shard = Shard(str(self.immutable_dir), None)
-            self._save_local_manifest()
 
         self._cleanup_mutable_shard(sync_timestamp)
         self._restart_sync_worker()
