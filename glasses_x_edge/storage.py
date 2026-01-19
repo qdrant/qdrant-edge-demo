@@ -1,35 +1,30 @@
-import json
 import queue
 import shutil
 import tempfile
 import threading
 import time
 import uuid
-from datetime import datetime
 from pathlib import Path
-from typing import Optional
 
 import requests
 from qdrant_client import QdrantClient, models
 from qdrant_edge import (
-    Distance,
+    EdgeConfig,
+    EdgeShard,
     FieldCondition,
     Filter,
     Mmr,
-    PayloadStorageType,
-    PlainIndexConfig,
     Point,
     QueryRequest,
     RangeFloat,
-    SegmentConfig,
-    Shard,
     UpdateOperation,
     VectorDataConfig,
-    VectorStorageType,
 )
 
 from .constants import (
     COLLECTION_NAME,
+    DISTANCE_METRIC_EDGE,
+    DISTANCE_METRIC_SERVER,
     IMAGE_PATH_KEY,
     IMMUTABLE_SHARD_DIR,
     MMR_DIVERSITY_FACTOR,
@@ -41,14 +36,12 @@ from .constants import (
     SYNC_INTERVAL,
     SYNC_TIMESTAMP_KEY,
     VECTOR_DIMENSION,
-    VECTOR_NAME,
 )
 
 
 class VisionStorage:
-    def __init__(self, data_dir: Path, vector_dim: int = VECTOR_DIMENSION):
+    def __init__(self, data_dir: Path):
         self.data_dir = data_dir
-        self.vector_dim = vector_dim
         self.mutable_shard = None
         self.immutable_shard = None
         self.server_client = QdrantClient(url=SERVER_URL)
@@ -64,21 +57,12 @@ class VisionStorage:
     def immutable_dir(self) -> Path:
         return self.data_dir / IMMUTABLE_SHARD_DIR
 
-    def _create_shard_config(self) -> SegmentConfig:
-        return SegmentConfig(
-            vector_data={
-                VECTOR_NAME: VectorDataConfig(
-                    size=self.vector_dim,
-                    distance=Distance.Cosine,
-                    storage_type=VectorStorageType.ChunkedMmap,
-                    index=PlainIndexConfig(),
-                    quantization_config=None,
-                    multivector_config=None,
-                    datatype=None,
-                ),
-            },
-            sparse_vector_data={},
-            payload_storage_type=PayloadStorageType.InRamMmap,
+    def _create_shard_config(self) -> EdgeConfig:
+        return EdgeConfig(
+            vector_data=VectorDataConfig(
+                size=VECTOR_DIMENSION,
+                distance=DISTANCE_METRIC_EDGE,
+            ),
         )
 
     def initialize(self):
@@ -86,10 +70,10 @@ class VisionStorage:
         self.mutable_dir.mkdir(parents=True, exist_ok=True)
 
         config = self._create_shard_config()
-        self.mutable_shard = Shard(str(self.mutable_dir), config)
+        self.mutable_shard = EdgeShard(str(self.mutable_dir), config)
 
         if self.immutable_dir.exists():
-            self.immutable_shard = Shard(str(self.immutable_dir), None)
+            self.immutable_shard = EdgeShard(str(self.immutable_dir), None)
 
         self._ensure_server_collection()
         self.worker_thread = threading.Thread(target=self._sync_worker, daemon=True)
@@ -102,12 +86,10 @@ class VisionStorage:
 
         self.server_client.create_collection(
             collection_name=COLLECTION_NAME,
-            vectors_config={
-                VECTOR_NAME: models.VectorParams(
-                    size=self.vector_dim,
-                    distance=models.Distance.COSINE,
-                )
-            },
+            vectors_config=models.VectorParams(
+                size=VECTOR_DIMENSION,
+                distance=DISTANCE_METRIC_SERVER,
+            ),
         )
 
     def _sync_worker(self):
@@ -156,12 +138,10 @@ class VisionStorage:
             SYNC_TIMESTAMP_KEY: sync_timestamp,
         }
 
-        point = Point(id=image_id, vector={VECTOR_NAME: vector}, payload=payload)
+        point = Point(id=image_id, vector=vector, payload=payload)
         self.mutable_shard.update(UpdateOperation.upsert_points([point]))
 
-        rest_point = models.PointStruct(
-            id=image_id, vector={VECTOR_NAME: vector}, payload=payload
-        )
+        rest_point = models.PointStruct(id=image_id, vector=vector, payload=payload)
         self.upload_queue.put(rest_point)
 
         return image_id
@@ -172,7 +152,6 @@ class VisionStorage:
             query=Mmr(
                 **{
                     "vector": query_embedding.tolist(),
-                    "using": VECTOR_NAME,
                     "lambda": MMR_DIVERSITY_FACTOR,
                     "candidates_limit": MMR_MAX_CANDIDATES,
                 }
@@ -302,8 +281,8 @@ class VisionStorage:
                 shutil.rmtree(self.immutable_dir)
             self.immutable_dir.mkdir(parents=True, exist_ok=True)
 
-            Shard.unpack_snapshot(str(snapshot_path), str(self.immutable_dir))
-            self.immutable_shard = Shard(str(self.immutable_dir), None)
+            EdgeShard.unpack_snapshot(str(snapshot_path), str(self.immutable_dir))
+            self.immutable_shard = EdgeShard(str(self.immutable_dir), None)
 
         self._cleanup_mutable_shard(sync_timestamp)
         self._restart_sync_worker()

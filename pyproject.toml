@@ -5,7 +5,7 @@ description = "Smart Glasses Vision Search Demo using Qdrant Edge"
 readme = "README.md"
 requires-python = ">=3.11,<3.14"
 dependencies = [
-    "qdrant-edge-py>=0.3.0",
+    "qdrant-edge-py>=0.5.0",
     "fastembed>=0.7.4",
     "opencv-python>=4.12.0.88",
     "numpy>=2.0.0,<2.3.0",
