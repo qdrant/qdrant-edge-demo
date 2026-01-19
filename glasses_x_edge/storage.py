@@ -10,8 +10,7 @@ from pathlib import Path
 
 import numpy as np
 import requests
-from qdrant_client import QdrantClient
-from qdrant_client import models as rest_models
+from qdrant_client import QdrantClient, models
 from qdrant_edge import (
     Distance,
     Mmr,
@@ -87,9 +86,9 @@ class VisionStorage:
         self.server_client.create_collection(
             collection_name=COLLECTION_NAME,
             vectors_config={
-                VECTOR_NAME: rest_models.VectorParams(
+                VECTOR_NAME: models.VectorParams(
                     size=self.vector_dim,
-                    distance=rest_models.Distance.COSINE,
+                    distance=models.Distance.COSINE,
                 )
             },
         )
@@ -148,7 +147,7 @@ class VisionStorage:
             else:
                 self.shard.update(UpdateOperation.upsert_points([point]))
 
-        rest_point = rest_models.PointStruct(
+        rest_point = models.PointStruct(
             id=image_id, vector={VECTOR_NAME: vector}, payload=payload
         )
         self.upload_queue.put(rest_point)
