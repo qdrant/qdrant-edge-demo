@@ -15,7 +15,6 @@ from glasses_x_edge.constants import (
     IMAGE_PATH_KEY,
     IMAGES_DIR_NAME,
     QDRANT_STORAGE_DIR_NAME,
-    QDRANT_STORAGE_DIR_NAME,
     SEARCH_LIMIT,
 )
 from glasses_x_edge.embedding import CrossModalEncoder

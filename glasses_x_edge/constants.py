@@ -7,7 +7,6 @@ DEFAULT_VIDEO_PATH = PROJECT_ROOT / "input.mp4"
 DEFAULT_DATA_DIR = PROJECT_ROOT / "demo-data"
 IMAGES_DIR_NAME = "images"
 QDRANT_STORAGE_DIR_NAME = "qdrant_storage"
-MANIFEST_FILE_NAME = "local_manifest.json"
 MUTABLE_SHARD_DIR = "mutable"
 IMMUTABLE_SHARD_DIR = "immutable"
 
