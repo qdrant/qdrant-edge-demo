@@ -6,8 +6,7 @@ from pathlib import Path
 import streamlit as st
 from PIL import Image
 
-from glasses_x_edge.capture import VideoCapture
-from glasses_x_edge.constants import (
+from config import (
     DEFAULT_DATA_DIR,
     DEFAULT_FPS,
     DEFAULT_SIMILARITY_THRESHOLD,
@@ -17,6 +16,7 @@ from glasses_x_edge.constants import (
     QDRANT_STORAGE_DIR_NAME,
     SEARCH_LIMIT,
 )
+from glasses_x_edge.capture import VideoCapture
 from glasses_x_edge.embedding import CrossModalEncoder
 from glasses_x_edge.storage import VisionStorage
 
@@ -96,7 +96,7 @@ def render_search_interface(system):
 
 @st.fragment(run_every=2)
 def render_sync_status(storage):
-    q_size = storage.upload_queue.qsize()
+    q_size = storage.upload_queue.size
     st.metric("Upload Queue", q_size)
 
 
@@ -158,8 +158,6 @@ def main():
 
 
 if __name__ == "__main__":
-    import sys
-
     from streamlit.web import cli as stcli
 
     if st.runtime.exists():

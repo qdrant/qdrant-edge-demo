@@ -42,5 +42,5 @@ make setup
 3. Run the demo:
 
 ```bash
-make demo
+make backend & make demo
 ```
