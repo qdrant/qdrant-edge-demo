@@ -34,7 +34,6 @@ from config import (
     SNAPSHOT_CHUNK_SIZE,
     SYNC_INTERVAL,
     SYNC_TIMESTAMP_KEY,
-    UPLOAD_TIMEOUT,
     VECTOR_DIMENSION,
 )
 
@@ -80,13 +79,12 @@ class VisionStorage:
         self.is_running = True
         self.worker_thread.start()
 
-    def _upload_batch(self, items: list, timeout: int) -> bool:
+    def _upload_batch(self, items: list) -> bool:
         try:
             resp = requests.post(
                 f"{BACKEND_URL}/api/upsert",
                 json=items,
                 headers=HEADERS,
-                timeout=timeout,
             )
             resp.raise_for_status()
             for item in items:
@@ -104,7 +102,7 @@ class VisionStorage:
                 items.append(self.upload_queue.get(block=False))
 
             if items:
-                self._upload_batch(items, UPLOAD_TIMEOUT)
+                self._upload_batch(items)
 
             time.sleep(SYNC_INTERVAL)
 
@@ -113,7 +111,7 @@ class VisionStorage:
         while self.upload_queue.size > 0:
             items.append(self.upload_queue.get(block=False))
         if items:
-            self._upload_batch(items, UPLOAD_TIMEOUT)
+            self._upload_batch(items)
 
     def stop_sync_worker(self):
         self.is_running = False

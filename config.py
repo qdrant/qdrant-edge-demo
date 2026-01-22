@@ -8,6 +8,8 @@ VECTOR_DIMENSION = 512
 API_KEY_HEADER = "X-API-Key"
 
 # SERVER CONFIG
+BACKEND_HOST = "0.0.0.0"
+BACKEND_PORT = 8000
 BACKEND_URL = "http://localhost:8000"
 QDRANT_URL = "http://localhost:6333"
 VALID_API_KEYS = ["demo-api-key"]
@@ -37,7 +39,6 @@ SYNC_INTERVAL = 5  # seconds
 SNAPSHOT_CHUNK_SIZE = 8192  # bytes
 DISTANCE_METRIC_EDGE = EdgeDistance.Cosine
 QUEUE_DB_NAME = "upload_queue"
-UPLOAD_TIMEOUT = 10  # seconds
 SYNC_TIMESTAMP_KEY = "sync_timestamp"
 IMAGE_PATH_KEY = "image_path"
 API_KEY = "demo-api-key"

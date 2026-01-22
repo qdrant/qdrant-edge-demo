@@ -10,6 +10,8 @@ from starlette.middleware.base import BaseHTTPMiddleware
 
 from config import (
     API_KEY_HEADER,
+    BACKEND_HOST,
+    BACKEND_PORT,
     COLLECTION_NAME,
     DISTANCE_METRIC,
     QDRANT_URL,
@@ -108,4 +110,4 @@ app.include_router(api)
 if __name__ == "__main__":
     import uvicorn
 
-    uvicorn.run(app, host="0.0.0.0", port=8000)
+    uvicorn.run(app, host=BACKEND_HOST, port=BACKEND_PORT)
