@@ -14,7 +14,7 @@ The system has two main parts: the glasses with Qdrant Edge and the Qdrant serve
 
 The glasses use a [CLIP model](https://huggingface.co/Qdrant/clip-ViT-B-32-vision) to turn video frames into vectors. We compare frame similarity to skip redundant frames.
 
-Vectors are stored locally in a mutable shard and forwarded to the server for indexing.
+Vectors are stored locally in a mutable shard for immediate search. They're also pushed to a SQLite-backed queue that syncs to the server in the background. If the network drops, the queue holds onto data until connectivity returns.
 
 ### Sync & Index
 
