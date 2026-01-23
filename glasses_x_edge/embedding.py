@@ -4,7 +4,7 @@ from pathlib import Path
 from fastembed import ImageEmbedding
 from PIL import Image
 
-from .constants import MODELS_CACHE_DIR, TEXT_MODEL_NAME, VISION_MODEL_NAME
+from config import MODELS_CACHE_DIR, TEXT_MODEL_NAME, VISION_MODEL_NAME
 
 logger = logging.getLogger(__name__)
 

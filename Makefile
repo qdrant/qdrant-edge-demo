@@ -1,21 +1,24 @@
-# Also update at glasses-x-edge/constants.py if changed
+# Also update at config.py if changed
 DATA_DIR = ./demo-data
 MODELS_DIR = ./models
 
-.PHONY: setup demo clean
+.PHONY: setup demo backend clean
 
 setup:
 	@command -v uv >/dev/null || (echo "uv not installed." && exit 1)
 	@echo "Installing dependencies..."
 	@uv sync >/dev/null 2>&1
 	@echo "Downloading CLIP models..."
-	@# Also update at glasses-x-edge/constants.py if changed
+	@# Also update at config.py if changed
 	@uv run python -c "from fastembed import ImageEmbedding; ImageEmbedding(model_name='Qdrant/clip-ViT-B-32-vision', cache_dir='$(MODELS_DIR)')"
 	@echo "Vision model ready"
 	@uv run python -c "from fastembed import TextEmbedding; TextEmbedding(model_name='Qdrant/clip-ViT-B-32-text', cache_dir='$(MODELS_DIR)')"
 	@echo "Text model ready"
 	@echo ""
-	@echo "Setup complete! Run: make demo"
+	@echo "Setup complete! Run: make backend & make demo"
+
+backend:
+	@uv run uvicorn backend.server:app
 
 demo:
 	@rm -rf $(DATA_DIR)

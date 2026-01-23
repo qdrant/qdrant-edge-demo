@@ -1,4 +1,3 @@
-import queue
 import shutil
 import tempfile
 import threading
@@ -7,7 +6,6 @@ import uuid
 from pathlib import Path
 
 import requests
-from qdrant_client import QdrantClient, models
 from qdrant_edge import (
     EdgeConfig,
     EdgeShard,
@@ -21,21 +19,29 @@ from qdrant_edge import (
     VectorDataConfig,
 )
 
-from .constants import (
-    COLLECTION_NAME,
+from config import (
+    API_KEY,
+    API_KEY_HEADER,
+    BACKEND_URL,
     DISTANCE_METRIC_EDGE,
-    DISTANCE_METRIC_SERVER,
     IMAGE_PATH_KEY,
     IMMUTABLE_SHARD_DIR,
     MMR_DIVERSITY_FACTOR,
     MMR_MAX_CANDIDATES,
     MUTABLE_SHARD_DIR,
+    QUEUE_DB_NAME,
     SEARCH_LIMIT,
-    SERVER_URL,
     SNAPSHOT_CHUNK_SIZE,
     SYNC_INTERVAL,
     SYNC_TIMESTAMP_KEY,
     VECTOR_DIMENSION,
+)
+
+from .queue import create_persistent_queue
+
+HEADERS = {API_KEY_HEADER: API_KEY}
+SHARD_CONFIG = EdgeConfig(
+    vector_data=VectorDataConfig(size=VECTOR_DIMENSION, distance=DISTANCE_METRIC_EDGE)
 )
 
 
@@ -44,8 +50,7 @@ class VisionStorage:
         self.data_dir = data_dir
         self.mutable_shard = None
         self.immutable_shard = None
-        self.server_client = QdrantClient(url=SERVER_URL)
-        self.upload_queue = queue.Queue()
+        self.upload_queue = None
         self.worker_thread = None
         self.is_running = False
 
@@ -57,224 +62,167 @@ class VisionStorage:
     def immutable_dir(self) -> Path:
         return self.data_dir / IMMUTABLE_SHARD_DIR
 
-    def _create_shard_config(self) -> EdgeConfig:
-        return EdgeConfig(
-            vector_data=VectorDataConfig(
-                size=VECTOR_DIMENSION,
-                distance=DISTANCE_METRIC_EDGE,
-            ),
-        )
-
     def initialize(self):
         self.data_dir.mkdir(parents=True, exist_ok=True)
         self.mutable_dir.mkdir(parents=True, exist_ok=True)
 
-        config = self._create_shard_config()
-        self.mutable_shard = EdgeShard(str(self.mutable_dir), config)
+        self.mutable_shard = EdgeShard(str(self.mutable_dir), SHARD_CONFIG)
 
         if self.immutable_dir.exists():
             self.immutable_shard = EdgeShard(str(self.immutable_dir), None)
 
-        self._ensure_server_collection()
+        self.upload_queue = create_persistent_queue(self.data_dir / QUEUE_DB_NAME)
+        self._start_sync_worker()
+
+    def _start_sync_worker(self):
         self.worker_thread = threading.Thread(target=self._sync_worker, daemon=True)
         self.is_running = True
         self.worker_thread.start()
 
-    def _ensure_server_collection(self):
-        if self.server_client.collection_exists(COLLECTION_NAME):
-            self.server_client.delete_collection(COLLECTION_NAME)
-
-        self.server_client.create_collection(
-            collection_name=COLLECTION_NAME,
-            vectors_config=models.VectorParams(
-                size=VECTOR_DIMENSION,
-                distance=DISTANCE_METRIC_SERVER,
-            ),
-        )
+    def _upload_batch(self, items: list) -> bool:
+        try:
+            resp = requests.post(
+                f"{BACKEND_URL}/api/upsert",
+                json=items,
+                headers=HEADERS,
+            )
+            resp.raise_for_status()
+            for item in items:
+                self.upload_queue.ack(item)
+            return True
+        except requests.RequestException:
+            for item in items:
+                self.upload_queue.nack(item)
+            return False
 
     def _sync_worker(self):
         while self.is_running:
-            points_to_upload = []
+            items = []
+            while self.upload_queue.size > 0:
+                items.append(self.upload_queue.get(block=False))
 
-            while len(points_to_upload) < 10:
-                try:
-                    points_to_upload.append(self.upload_queue.get_nowait())
-                except queue.Empty:
-                    break
+            if items:
+                self._upload_batch(items)
 
-            if not points_to_upload:
-                time.sleep(SYNC_INTERVAL)
-                continue
-
-            self.server_client.upsert(
-                collection_name=COLLECTION_NAME, points=points_to_upload
-            )
             time.sleep(SYNC_INTERVAL)
 
     def force_sync(self):
-        points = []
-        while not self.upload_queue.empty():
-            try:
-                points.append(self.upload_queue.get_nowait())
-            except queue.Empty:
-                break
+        items = []
+        while self.upload_queue.size > 0:
+            items.append(self.upload_queue.get(block=False))
+        if items:
+            self._upload_batch(items)
 
-        if points:
-            self.server_client.upsert(
-                collection_name=COLLECTION_NAME, points=points, wait=True
-            )
-
-    def stop_server_sync_worker(self):
+    def stop_sync_worker(self):
         self.is_running = False
         if self.worker_thread:
             self.worker_thread.join()
 
     def store_image(self, image_path, embedding) -> str:
         image_id = str(uuid.uuid4())
-        sync_timestamp = time.time()
+        payload = {IMAGE_PATH_KEY: str(image_path), SYNC_TIMESTAMP_KEY: time.time()}
         vector = embedding.tolist()
-        payload = {
-            IMAGE_PATH_KEY: str(image_path),
-            SYNC_TIMESTAMP_KEY: sync_timestamp,
-        }
 
-        point = Point(id=image_id, vector=vector, payload=payload)
-        self.mutable_shard.update(UpdateOperation.upsert_points([point]))
-
-        rest_point = models.PointStruct(id=image_id, vector=vector, payload=payload)
-        self.upload_queue.put(rest_point)
-
+        self.mutable_shard.update(
+            UpdateOperation.upsert_points(
+                [Point(id=image_id, vector=vector, payload=payload)]
+            )
+        )
+        self.upload_queue.put({"id": image_id, "vector": vector, "payload": payload})
         return image_id
 
     def search_similar(self, query_embedding, limit: int = SEARCH_LIMIT):
-        query_request = QueryRequest(
+        query = QueryRequest(
             prefetches=[],
             query=Mmr(
+                # Using dict comprehension because "lambda" is a reserved keyword in Python
                 **{
                     "vector": query_embedding.tolist(),
                     "lambda": MMR_DIVERSITY_FACTOR,
                     "candidates_limit": MMR_MAX_CANDIDATES,
-                }
+                },
             ),
-            filter=None,
-            score_threshold=None,
             limit=limit,
-            offset=0,
-            params=None,
-            with_vector=False,
             with_payload=True,
         )
 
-        mutable_results = self.mutable_shard.query(query_request)
+        results = self.mutable_shard.query(query)
+        if self.immutable_shard:
+            results.extend(self.immutable_shard.query(query))
 
-        immutable_results = []
-        if self.immutable_shard is not None:
-            immutable_results = self.immutable_shard.query(query_request)
+        results.sort(key=lambda x: x.score, reverse=True)
 
-        all_results = list(mutable_results) + list(immutable_results)
-        all_results.sort(key=lambda x: x.score, reverse=True)
+        seen, unique = set(), []
+        for r in results:
+            if r.id not in seen:
+                seen.add(r.id)
+                unique.append(
+                    {
+                        "id": r.id,
+                        "score": r.score,
+                        IMAGE_PATH_KEY: r.payload[IMAGE_PATH_KEY],
+                    }
+                )
+        return unique[:limit]
 
-        seen_ids = set()
-        unique_results = []
-        for result in all_results:
-            if result.id not in seen_ids:
-                seen_ids.add(result.id)
-                unique_results.append(result)
+    def _download_snapshot(
+        self, endpoint: str, target_path: Path, json_data: dict = None
+    ):
+        resp = requests.post(
+            f"{BACKEND_URL}{endpoint}",
+            json=json_data,
+            headers=HEADERS,
+            stream=True,
+        )
+        resp.raise_for_status()
+        with open(target_path, "wb") as f:
+            for chunk in resp.iter_content(chunk_size=SNAPSHOT_CHUNK_SIZE):
+                f.write(chunk)
 
-        return [
-            {
-                "id": result.id,
-                "score": result.score,
-                IMAGE_PATH_KEY: result.payload[IMAGE_PATH_KEY],
-            }
-            for result in unique_results[:limit]
-        ]
+    def _cleanup_mutable_shard(self, sync_timestamp: float):
+        self.mutable_shard.update(
+            UpdateOperation.delete_points_by_filter(
+                Filter(
+                    must=[
+                        FieldCondition(
+                            key=SYNC_TIMESTAMP_KEY, range=RangeFloat(lte=sync_timestamp)
+                        )
+                    ]
+                )
+            )
+        )
 
-    def _get_local_manifest(self) -> dict:
-        if self.immutable_shard is None:
+    def sync_from_server(self):
+        self.stop_sync_worker()
+        self.force_sync()
+
+        if not self.immutable_shard:
             raise ValueError(
                 "Baseline for partial snapshots is not set. Run a full sync first."
             )
-        return self.immutable_shard.snapshot_manifest()
 
-    def _download_partial_snapshot(
-        self, manifest: dict, shard_id: int, target_path: Path
-    ):
-        url = f"{SERVER_URL}/collections/{COLLECTION_NAME}/shards/{shard_id}/snapshot/partial/create"
-        response = requests.post(url, json=manifest, stream=True)
-        response.raise_for_status()
-        with open(target_path, "wb") as f:
-            for chunk in response.iter_content(chunk_size=SNAPSHOT_CHUNK_SIZE):
-                f.write(chunk)
+        manifest = self.immutable_shard.snapshot_manifest()
+        sync_timestamp = time.time()
 
-    def _create_server_snapshot(self, shard_id: int):
-        snap_url = (
-            f"{SERVER_URL}/collections/{COLLECTION_NAME}/shards/{shard_id}/snapshots"
-        )
-        resp = requests.post(snap_url)
-        resp.raise_for_status()
+        with tempfile.TemporaryDirectory(dir=self.data_dir) as temp_dir:
+            snapshot_path = Path(temp_dir) / "partial.snapshot"
+            self._download_snapshot(
+                "/api/snapshots/partial", snapshot_path, {"manifest": manifest}
+            )
+            self.immutable_shard.update_from_snapshot(str(snapshot_path))
 
-        result = resp.json().get("result")
-        if not result or not result.get("name"):
-            raise ValueError("Failed to get snapshot name from response")
+        self._cleanup_mutable_shard(sync_timestamp)
+        self._start_sync_worker()
 
-        return result["name"], f"{snap_url}/{result['name']}"
-
-    def _download_snapshot(self, url: str, target_path: Path):
-        with requests.get(url, stream=True) as r:
-            r.raise_for_status()
-            with open(target_path, "wb") as f:
-                for chunk in r.iter_content(chunk_size=SNAPSHOT_CHUNK_SIZE):
-                    f.write(chunk)
-
-    def _restart_sync_worker(self):
-        if not self.is_running:
-            self.worker_thread = threading.Thread(target=self._sync_worker, daemon=True)
-            self.is_running = True
-            self.worker_thread.start()
-
-    def _cleanup_mutable_shard(self, sync_timestamp: float):
-        cleanup_filter = Filter(
-            must=[
-                FieldCondition(
-                    key=SYNC_TIMESTAMP_KEY, range=RangeFloat(lte=sync_timestamp)
-                )
-            ]
-        )
-        self.mutable_shard.update(
-            UpdateOperation.delete_points_by_filter(cleanup_filter)
-        )
-
-    def sync_from_server(self, shard_id: int = 0):
-        self.stop_server_sync_worker()
+    def full_sync_from_server(self):
+        self.stop_sync_worker()
         self.force_sync()
-
-        local_manifest = self._get_local_manifest()
 
         sync_timestamp = time.time()
 
         with tempfile.TemporaryDirectory(dir=self.data_dir) as temp_dir:
-            partial_snapshot_path = Path(temp_dir) / "partial.snapshot"
-            self._download_partial_snapshot(
-                local_manifest, shard_id, partial_snapshot_path
-            )
-
-            self.immutable_shard.update_from_snapshot(str(partial_snapshot_path))
-
-        self._cleanup_mutable_shard(sync_timestamp)
-        self._restart_sync_worker()
-
-    def full_sync_from_server(self, shard_id: int = 0):
-        self.stop_server_sync_worker()
-        self.force_sync()
-
-        sync_timestamp = time.time()
-
-        _, snapshot_url = self._create_server_snapshot(shard_id)
-
-        with tempfile.TemporaryDirectory(dir=self.data_dir) as restore_dir:
-            snapshot_path = Path(restore_dir) / "shard.snapshot"
-            self._download_snapshot(snapshot_url, snapshot_path)
+            snapshot_path = Path(temp_dir) / "shard.snapshot"
+            self._download_snapshot("/api/snapshots/full", snapshot_path)
 
             self.immutable_shard = None
             if self.immutable_dir.exists():
@@ -285,4 +233,4 @@ class VisionStorage:
             self.immutable_shard = EdgeShard(str(self.immutable_dir), None)
 
         self._cleanup_mutable_shard(sync_timestamp)
-        self._restart_sync_worker()
+        self._start_sync_worker()

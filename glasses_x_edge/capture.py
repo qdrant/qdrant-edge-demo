@@ -7,7 +7,7 @@ import numpy as np
 from PIL import Image
 from skimage.metrics import structural_similarity
 
-from .constants import JPEG_QUALITY
+from config import JPEG_QUALITY
 
 FRAME_RESIZE_TARGET = (128, 128)
 SSIM_DATA_RANGE = 255
