@@ -146,7 +146,7 @@ class VisionStorage:
             with_payload=True,
         )
 
-        results = list(self.mutable_shard.query(query))
+        results = self.mutable_shard.query(query)
         if self.immutable_shard:
             results.extend(self.immutable_shard.query(query))
 
