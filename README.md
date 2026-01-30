@@ -24,7 +24,7 @@ flowchart TB
         end
 
         subgraph QUEUE["Sync Queue"]
-            SQL[(Persistent SQLite Queue)]
+            SQL[(Persistent Queue)]
         end
 
         subgraph SEARCH["Search Pipeline"]
