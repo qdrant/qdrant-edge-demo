@@ -8,6 +8,51 @@ Powered by [Qdrant Edge](https://qdrant.tech/edge/).
 
 ## How?
 
+```mermaid
+flowchart TB
+    subgraph GLASSES["Smart Glasses 🕶️"]
+        direction TB
+
+        subgraph CAPTURE["Input Pipeline"]
+            VID[Video Input] --> CLIP[CLIP ViT-B-32 Vision] --> VEC[Vector Embeddings]
+        end
+
+        subgraph STORAGE["Qdrant Edge"]
+            direction LR
+            MUT[(Mutable Shard <br/> Unindexed)]
+            IMM[(Immutable Shard <br/> HNSW Indexed)]
+        end
+
+        subgraph QUEUE["Sync Queue"]
+            SQL[(Persistent SQLite Queue)]
+        end
+
+        subgraph SEARCH["Search Pipeline"]
+            TXT[Text Query]
+            TENC[CLIP ViT-B-32 Text]
+            TVEC[Vector Embeddings]
+            QRY[MMR Query]
+            RES[Merged Results]
+
+            TXT --> TENC --> TVEC --> QRY
+            MUT -.-> QRY
+            IMM -.-> QRY
+            QRY --> RES
+        end
+
+        VEC --> MUT
+        VEC --> SQL
+    end
+
+    subgraph SERVER["Qdrant Server"]
+        QDRANT[(HNSW Index)]
+    end
+
+    SQL ==Upload==> QDRANT
+    QDRANT ==Snapshot Sync==> IMM
+    IMM -.Dedup.-> MUT
+```
+
 The system has two main parts: the glasses with Qdrant Edge and the Qdrant server.
 
 ### On the device
@@ -21,7 +66,6 @@ Vectors are stored locally in a mutable shard for immediate search. They're also
 Building the HNSW graph is CPU-heavy, so we offload it to the server. The glasses sync back the indexed data into an immutable shard.
 
 We use this two-shard design to enable partial snapshots. Since the immutable shard is always an exact copy of the server, we can limit the snapshot download to only the new updates instead of the full database. Searches query both shards and merge results.
-
 
 ## Try it out
 
